@@ -1,0 +1,54 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+def nomor = (System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int
+
+android {
+    namespace 'com.omen.adblokal'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.omen.adblokal'
+        minSdk 30
+        targetSdk 33
+        versionCode nomor
+        versionName "1.0.$nomor"
+    }
+
+    // Kunci tanda tangan TIDAK ada di repo. GitHub Actions membuatnya dari secret
+    // ADBLOKAL_KEYSTORE_B64 + ADBLOKAL_KEYSTORE_PASSWORD. Tanpa secret, build release
+    // memakai kunci debug (hanya untuk uji; APK itu tidak bisa menimpa versi resmi).
+    def ksFile = file('adblokal-release.jks')
+    def ksPass = System.getenv('ADBLOKAL_KEYSTORE_PASSWORD')
+    signingConfigs {
+        adblokal {
+            if (ksFile.exists() && ksPass) {
+                storeFile ksFile
+                storePassword ksPass
+                keyAlias 'adblokal'
+                keyPassword ksPass
+            }
+        }
+    }
+    buildTypes {
+        release { minifyEnabled false; signingConfig(ksFile.exists() && ksPass ? signingConfigs.adblokal : signingConfigs.debug) }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    packaging {
+        resources { excludes += ['META-INF/versions/9/OSGI-INF/MANIFEST.MF'] }
+    }
+    lint { checkReleaseBuilds false; abortOnError false }
+}
+
+dependencies {
+    // Pustaka klien ADB murni-JVM: pairing (SPAKE2+TLS) & sambungan ke adbd perangkat sendiri.
+    implementation 'com.github.MuntashirAkon:libadb-android:3.1.0'
+    implementation 'org.conscrypt:conscrypt-android:2.5.3'
+    implementation 'com.github.MuntashirAkon:sun-security-android:1.1'
+}
