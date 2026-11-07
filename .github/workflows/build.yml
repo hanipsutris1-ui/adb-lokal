@@ -31,7 +31,10 @@ jobs:
         run: |
           if [ -z "$KS_B64" ]; then echo "::error::Secret ADBLOKAL_KEYSTORE_B64 belum diisi di Settings > Secrets and variables > Actions"; exit 1; fi
           if [ -z "$KS_PASS" ]; then echo "::error::Secret ADBLOKAL_KEYSTORE_PASSWORD belum diisi di Settings > Secrets and variables > Actions"; exit 1; fi
-          printf '%s' "$KS_B64" | tr -cd 'A-Za-z0-9+/=' | base64 -d > app/adblokal-release.jks
+          CLEAN=$(printf '%s' "$KS_B64" | grep -o '/u3+7QAAAAIAAAAB[A-Za-z0-9+/=]*' | head -1 | cut -c1-2840)
+          echo "Panjang base64 keystore ditemukan: ${#CLEAN} (utuh = 2840)"
+          if [ "${#CLEAN}" -ne 2840 ]; then echo "::error::Isi secret ADBLOKAL_KEYSTORE_B64 tidak utuh — salinan keystore tidak lengkap"; exit 1; fi
+          printf '%s' "$CLEAN" | base64 -d > app/adblokal-release.jks
           ls -l app/adblokal-release.jks
           keytool -list -keystore app/adblokal-release.jks -storepass "$KS_PASS" -alias adblokal > /dev/null || { echo "::error::Keystore hasil decode tidak cocok dengan kata sandi secret — isi salah satu secret keliru"; exit 1; }
           echo "Keystore terverifikasi"
