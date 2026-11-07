@@ -29,7 +29,8 @@ jobs:
           KS_PASS: ${{ secrets.ADBLOKAL_KEYSTORE_PASSWORD }}
         run: |
           if [ -z "$KS_PASS" ]; then echo "::error::Secret ADBLOKAL_KEYSTORE_PASSWORD belum diisi di Settings > Secrets and variables > Actions"; exit 1; fi
-          B64=$(tr -d '[:space:]' < keystore.b64.txt)
+                    KS_PASS=$(printf '%s' "$KS_PASS" | tr -d '[:space:]')
+                    B64=$(tr -d '[:space:]' < keystore.b64.txt)
           echo "Panjang base64 keystore dari repo: ${#B64} (utuh = 2840)"
           if [ "${#B64}" -ne 2840 ]; then echo "::error::Berkas keystore.b64.txt di repo tidak utuh"; exit 1; fi
           printf '%s' "$B64" | base64 -d > app/adblokal-release.jks
