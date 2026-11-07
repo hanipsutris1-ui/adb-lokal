@@ -1,0 +1,60 @@
+name: Bangun APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Pasang kunci tanda tangan dari secret
+        env:
+          KS_B64: ${{ secrets.ADBLOKAL_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KS_B64" ]; then echo "::error::Secret ADBLOKAL_KEYSTORE_B64 belum diisi di Settings > Secrets and variables > Actions"; exit 1; fi
+          echo "$KS_B64" | base64 -d > app/adblokal-release.jks
+
+      - name: Bangun APK
+        env:
+          ADBLOKAL_KEYSTORE_PASSWORD: ${{ secrets.ADBLOKAL_KEYSTORE_PASSWORD }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Catatan rilis dari semua commit sejak rilis sebelumnya
+        run: |
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          git log --reverse --pretty=format:'• %s%n%b%n' ${PREV:+$PREV..}HEAD \
+            | grep -v -E '^(Co-Authored-By|Claude-Session):' | cat -s > catatan.txt
+          cat catatan.txt
+
+      - name: Beri nama APK
+        run: cp app/build/outputs/apk/release/app-release.apk ADBLokal-${{ github.run_number }}.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ADBLokal-${{ github.run_number }}
+          path: ADBLokal-*.apk
+
+      - name: Terbitkan di Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: ADB Lokal ${{ github.run_number }}
+          body_path: catatan.txt
+          files: ADBLokal-*.apk
