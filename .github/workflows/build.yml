@@ -27,9 +27,14 @@ jobs:
       - name: Pasang kunci tanda tangan dari secret
         env:
           KS_B64: ${{ secrets.ADBLOKAL_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ADBLOKAL_KEYSTORE_PASSWORD }}
         run: |
           if [ -z "$KS_B64" ]; then echo "::error::Secret ADBLOKAL_KEYSTORE_B64 belum diisi di Settings > Secrets and variables > Actions"; exit 1; fi
-          echo "$KS_B64" | base64 -d > app/adblokal-release.jks
+          if [ -z "$KS_PASS" ]; then echo "::error::Secret ADBLOKAL_KEYSTORE_PASSWORD belum diisi di Settings > Secrets and variables > Actions"; exit 1; fi
+          printf '%s' "$KS_B64" | tr -cd 'A-Za-z0-9+/=' | base64 -d > app/adblokal-release.jks
+          ls -l app/adblokal-release.jks
+          keytool -list -keystore app/adblokal-release.jks -storepass "$KS_PASS" -alias adblokal > /dev/null || { echo "::error::Keystore hasil decode tidak cocok dengan kata sandi secret — isi salah satu secret keliru"; exit 1; }
+          echo "Keystore terverifikasi"
 
       - name: Bangun APK
         env:
