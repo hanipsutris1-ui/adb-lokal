@@ -29,12 +29,13 @@ jobs:
           KS_PASS: ${{ secrets.ADBLOKAL_KEYSTORE_PASSWORD }}
         run: |
           if [ -z "$KS_PASS" ]; then echo "::error::Secret ADBLOKAL_KEYSTORE_PASSWORD belum diisi di Settings > Secrets and variables > Actions"; exit 1; fi
-                    KS_PASS=$(printf '%s' "$KS_PASS" | tr -d '[:space:]')
+                    KS_PASS=$(printf '%s' "$KS_PASS" | tr -cd 'A-Za-z0-9')
                     B64=$(tr -d '[:space:]' < keystore.b64.txt)
           echo "Panjang base64 keystore dari repo: ${#B64} (utuh = 2840)"
           if [ "${#B64}" -ne 2840 ]; then echo "::error::Berkas keystore.b64.txt di repo tidak utuh"; exit 1; fi
           printf '%s' "$B64" | base64 -d > app/adblokal-release.jks
           ls -l app/adblokal-release.jks
+          echo "Panjang kata sandi bersih: ${#KS_PASS} (benar = 24)"
           keytool -list -keystore app/adblokal-release.jks -storepass "$KS_PASS" -alias adblokal > /dev/null || { echo "::error::Keystore di repo tidak cocok dengan kata sandi secret"; exit 1; }
           echo "ADBLOKAL_KEYSTORE_PASSWORD=$KS_PASS" >> "$GITHUB_ENV"
           echo "Keystore terverifikasi"
