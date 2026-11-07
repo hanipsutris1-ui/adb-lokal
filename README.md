@@ -46,3 +46,4 @@ Actions mengambilnya dari secret:
 - `ADBLOKAL_KEYSTORE_PASSWORD` — kata sandi keystore (alias `adblokal`)
 
 Setiap push terbit sebagai Release `v<nomor run>` berisi `ADBLokal-<n>.apk`.
+Secret lama `ADBLOKAL_KEYSTORE_B64` tidak lagi dipakai dan boleh dihapus.
