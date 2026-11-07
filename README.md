@@ -37,10 +37,12 @@ tiap menit sampai ±12 kali. Semua langkah tercatat di layar utama aplikasi.
 
 ## Bangun & tanda tangan
 
-Dibangun oleh GitHub Actions (Gradle 8.9, JDK 17). Kunci tanda tangan
-tidak ada di repo; Actions membuatnya dari secret:
+Dibangun oleh GitHub Actions (Gradle 8.9, JDK 17). Berkas keystore
+(ter-Base64) disimpan di repo ini sebagai `keystore.b64.txt` — repo ini
+privat, dan keystore tanpa kata sandinya tidak bisa dipakai
+menandatangani apa pun. Kata sandinya sendiri tidak ada di repo;
+Actions mengambilnya dari secret:
 
-- `ADBLOKAL_KEYSTORE_B64` — isi berkas keystore ter-Base64
 - `ADBLOKAL_KEYSTORE_PASSWORD` — kata sandi keystore (alias `adblokal`)
 
 Setiap push terbit sebagai Release `v<nomor run>` berisi `ADBLokal-<n>.apk`.
