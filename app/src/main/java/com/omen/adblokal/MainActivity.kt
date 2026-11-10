@@ -669,7 +669,7 @@ class MainActivity : Activity() {
                 saranTerbaru = saran
                 segarkanJudulExpander(sistem.size)
                 tombolBulk.visibility =
-                    if (saran.any { it.aktif }) View.VISIBLE else View.GONE
+                    if (saran.any { !it.nonaktif }) View.VISIBLE else View.GONE
                 if (terhapus.isEmpty()) {
                     tautanPulih.visibility = View.GONE
                 } else {
@@ -807,7 +807,7 @@ class MainActivity : Activity() {
 
     /** Nonaktifkan semua saran debloat yang masih aktif, sesudah satu konfirmasi. */
     private fun konfirmasiBulk() {
-        val target = saranTerbaru.filter { it.aktif && it.lindungi == null }
+        val target = saranTerbaru.filter { !it.nonaktif && it.lindungi == null }
         if (target.isEmpty()) {
             pesan("Semua saran sudah nonaktif.")
             return
