@@ -147,10 +147,18 @@ object KunciPort {
             log("Izin WRITE_SECURE_SETTINGS belum ada — wireless debugging harus sudah nyala dari sesi pemasangan.")
         }
 
-        // 2) Sambung ke adbd sendiri (beri waktu WD + mDNS siap, terutama sesudah boot)
+        // 2) Sambung ke adbd sendiri (beri waktu WD + mDNS siap, terutama sesudah boot).
+        //    Bila kanal shell SUDAH hidup (mis. dibuka lebih dulu oleh layar utama
+        //    v12 untuk panel Debloat), pakai sambungan yang ada itu — autoConnect
+        //    kedua di atas sambungan yang hidup selalu gagal.
         val mgr = AdbManager.getInstance(ctx)
         var tersambung = false
+        if (shell(ctx, "echo kunci-ok", log).contains("kunci-ok")) {
+            tersambung = true
+            log("Kanal shell sudah hidup — memakai sambungan yang ada.")
+        }
         for (usaha in 1..6) {
+            if (tersambung) break
             tersambung = try { mgr.autoConnect(ctx, 12_000) } catch (e: Exception) {
                 log("autoConnect ke-$usaha melempar: ${e.message}"); false
             }
