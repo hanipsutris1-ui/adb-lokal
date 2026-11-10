@@ -31,14 +31,14 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Layar utama ADB Lokal v12.
+ * Layar utama ADB Lokal.
  *
  * Tampilan per tab bergaya tvOS (gradasi gelap + kartu kaca) dengan saklar
  * gaya Launcher Luxio; fungsi penjaga port 5555 sama persis dengan v11
  * (KunciPort/LayananKunci/BootReceiver tidak berubah perilakunya), ditambah
- * panel Debloat ala tvOS yang berjalan lewat kanal shell libadb yang sudah
- * ada: Downloaded Apps (hapus), System Apps (saklar nonaktif/aktif),
- * Restore Removed Apps (pulihkan), ADB Tools (status kanal).
+ * alat debloat ala tvOS yang berjalan lewat kanal shell libadb yang sudah
+ * ada: System Apps (saklar nonaktif/aktif + saran debloat), Downloaded Apps
+ * (hapus), dan Restore Removed Apps (pulihkan) dari tab System Apps.
  *
  * Semua daftar dibaca langsung dari perangkat yang menjalankan aplikasi,
  * dan perlindungan paket dihitung per perangkat — aplikasi ini bisa dipakai
@@ -55,21 +55,24 @@ class MainActivity : Activity() {
     private lateinit var pilShell: TextView
     private lateinit var tabTeks: List<TextView>
     private lateinit var panelStatus: View
-    private lateinit var panelDebloat: View
     private lateinit var panelSistem: View
     private lateinit var panelUnduhan: View
     private lateinit var panelPulih: View
     private lateinit var teksStatus: TextView
     private lateinit var saklarPenjaga: Switch
-    private lateinit var nilaiUnduhan: TextView
-    private lateinit var nilaiSistem: TextView
-    private lateinit var nilaiPulih: TextView
-    private lateinit var nilaiKanal: TextView
+    private lateinit var tombolBulk: Button
+    private lateinit var judulExpander: TextView
+    private lateinit var daftarSistemView: ListView
+    private lateinit var tautanPulih: TextView
+    private var expanderTerbuka = false
+    private var jumlahSistemTerbaru = 0
+    private var saranTerbaru: List<DataPaket.Info> = emptyList()
     private lateinit var logView: TextView
     private lateinit var isiLipat: View
     private lateinit var judulLipat: TextView
     private lateinit var portField: EditText
     private lateinit var kodeField: EditText
+    private lateinit var adapterSaran: AdapterPaket
     private lateinit var adapterSistem: AdapterPaket
     private lateinit var adapterUnduhan: AdapterPaket
     private lateinit var adapterPulih: AdapterPaket
@@ -238,7 +241,7 @@ class MainActivity : Activity() {
         root.addView(barisPil)
 
         // Bar tab kaca model segmented.
-        val namaTab = listOf("Status", "Debloat", "System Apps", "Downloaded Apps")
+        val namaTab = listOf("Status", "System Apps", "Downloaded Apps")
         val tabBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             background = Gaya.kaca(this@MainActivity, 999)
@@ -271,33 +274,28 @@ class MainActivity : Activity() {
             )
         }
         panelStatus = bangunPanelStatus()
-        panelDebloat = bangunPanelDebloat()
         panelSistem = bangunPanelSistem()
         panelUnduhan = bangunPanelUnduhan()
         panelPulih = bangunPanelPulih()
-        listOf(panelStatus, panelDebloat, panelSistem, panelUnduhan, panelPulih)
+        listOf(panelStatus, panelSistem, panelUnduhan, panelPulih)
             .forEach { wadah.addView(it) }
         root.addView(wadah)
 
-        root.addView(teks(
-            "Dilindungi & tidak bisa diubah: sistem mobil (com.tw.* dan sejenisnya), " +
-                "pengaturan mobil, launcher Home yang sedang dipakai, inti Android, " +
-                "Tailscale, dan aplikasi ini sendiri. Semua daftar & status dibaca " +
-                "langsung dari perangkat ini.",
-            12f, Gaya.KEDUA
-        ).apply { setPadding(0, dp(10), 0, 0) })
-
         setContentView(root)
-        bukaTab(0)
+        val tabAwal = getSharedPreferences("setelan", MODE_PRIVATE)
+            .getInt("tab_terakhir", 0).coerceIn(0, 2)
+        bukaTab(tabAwal)
     }
 
     private fun bukaTab(i: Int) {
-        val panel = listOf(panelStatus, panelDebloat, panelSistem, panelUnduhan)[i]
+        val panel = listOf(panelStatus, panelSistem, panelUnduhan)[i]
         tampilkanPanel(panel, i)
     }
 
     private fun tampilkanPanel(panel: View, tabAktif: Int) {
-        listOf(panelStatus, panelDebloat, panelSistem, panelUnduhan, panelPulih)
+        getSharedPreferences("setelan", MODE_PRIVATE).edit()
+            .putInt("tab_terakhir", tabAktif).apply()
+        listOf(panelStatus, panelSistem, panelUnduhan, panelPulih)
             .forEach { it.visibility = if (it === panel) View.VISIBLE else View.GONE }
         tabTeks.forEachIndexed { i, tv ->
             if (i == tabAktif) {
@@ -422,34 +420,17 @@ class MainActivity : Activity() {
         logView = teks("(memuat…)", 12f, Gaya.REDA)
         kartuLog.addView(logView)
         lipat.addView(kartuLog)
+        lipat.addView(teks(
+            "Dilindungi & tidak bisa diubah: sistem mobil (com.tw.* dan sejenisnya), " +
+                "pengaturan mobil, launcher Home yang sedang dipakai, inti Android, " +
+                "Tailscale, dan aplikasi ini sendiri. Semua daftar & status dibaca " +
+                "langsung dari perangkat ini.",
+            12f, Gaya.KEDUA
+        ).apply { setPadding(dp(4), 0, dp(4), dp(2)) })
         lipat.visibility = if (KunciPort.punyaIzin(this)) View.GONE else View.VISIBLE
         if (lipat.visibility == View.VISIBLE) judulLipat.text = "Pemasangan & Catatan  ▾"
         isiLipat = lipat
         isi.addView(lipat)
-        return gulir(isi)
-    }
-
-    private fun bangunPanelDebloat(): View {
-        val isi = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(2), 0, dp(8))
-        }
-        nilaiUnduhan = barisMenu(isi, "Downloaded Apps", "…") { bukaTab(3) }
-        nilaiSistem = barisMenu(isi, "System Apps", "…") { bukaTab(2) }
-        nilaiPulih = barisMenu(isi, "Restore Removed Apps", "") {
-            tampilkanPanel(panelPulih, 1)
-        }
-        nilaiKanal = barisMenu(isi, "ADB Tools", "…") {
-            bukaTab(0)
-            muatSemua(probeKanal = true)
-        }
-        isi.addView(teks(
-            "Sebelum mulai: aplikasi unduhan dihapus dari perangkat — pasang lagi dari " +
-                "toko untuk mengembalikannya. Aplikasi sistem hanya dinonaktifkan dan " +
-                "bisa diaktifkan lagi kapan saja; yang sudah terlanjur di-Remove bisa " +
-                "dipulihkan lewat Restore Removed Apps.",
-            13.5f, Gaya.KEDUA
-        ).apply { setPadding(dp(4), dp(6), dp(4), 0) })
         return gulir(isi)
     }
 
@@ -492,9 +473,7 @@ class MainActivity : Activity() {
                     background = Gaya.pil(this@MainActivity)
                     setTextColor(Gaya.KEDUA)
                 }
-                if (::adapterSistem.isInitialized) {
-                    adapterSistem.saring(cari.text.toString(), hanyaNonaktif)
-                }
+                terapkanSaring(cari.text.toString())
             }
         }
         val barisChip = LinearLayout(this).apply {
@@ -507,31 +486,86 @@ class MainActivity : Activity() {
         }
         barisChip.addView(chip)
         isi.addView(barisChip)
-        adapterSistem = AdapterPaket(
+        isi.addView(teks(
+            "Saran debloat — terpasang di perangkat ini", 13f, Gaya.KEDUA, tebal = true
+        ).apply { setPadding(dp(4), dp(2), dp(4), dp(6)) })
+        tombolBulk = tombol("Nonaktifkan semua saran yang masih aktif") { konfirmasiBulk() }.apply {
+            val lp = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            lp.setMargins(0, 0, 0, dp(8))
+            layoutParams = lp
+            visibility = View.GONE
+        }
+        isi.addView(tombolBulk)
+        adapterSaran = AdapterPaket(
             this, AdapterPaket.Mode.SISTEM,
             padaSaklar = { info, nyala -> saklarSistemBerubah(info, nyala) },
             padaTombol = { }
         )
-        val daftar = ListView(this).apply {
-            adapter = adapterSistem
+        isi.addView(ListView(this).apply {
+            adapter = adapterSaran
             divider = null
             dividerHeight = 0
             setCacheColorHint(Color.TRANSPARENT)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
             )
-        }
-        isi.addView(daftar)
-        cari.addTextChangedListener(object : TextWatcher {
-            override fun afterTextChanged(s: Editable?) {
-                if (::adapterSistem.isInitialized) {
-                    adapterSistem.saring(s?.toString() ?: "", hanyaNonaktif)
-                }
+        })
+        judulExpander = teks("Tampilkan semua aplikasi sistem ›", 15f, Gaya.TINTA, tebal = true).apply {
+            isClickable = true
+            setPadding(dp(4), dp(10), dp(4), dp(8))
+            setOnClickListener {
+                expanderTerbuka = !expanderTerbuka
+                daftarSistemView.visibility = if (expanderTerbuka) View.VISIBLE else View.GONE
+                segarkanJudulExpander(jumlahSistemTerbaru)
             }
-            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        }
+        isi.addView(judulExpander)
+        adapterSistem = AdapterPaket(
+            this, AdapterPaket.Mode.SISTEM,
+            padaSaklar = { info, nyala -> saklarSistemBerubah(info, nyala) },
+            padaTombol = { }
+        )
+        daftarSistemView = ListView(this).apply {
+            adapter = adapterSistem
+            divider = null
+            dividerHeight = 0
+            setCacheColorHint(Color.TRANSPARENT)
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        }
+        isi.addView(daftarSistemView)
+        tautanPulih = teks("", 13.5f, Gaya.KEDUA).apply {
+            isClickable = true
+            setPadding(dp(4), dp(8), dp(4), dp(2))
+            visibility = View.GONE
+            setOnClickListener { tampilkanPanel(panelPulih, 1) }
+        }
+        isi.addView(tautanPulih)
+        cari.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s2: Editable?) {
+                terapkanSaring(s2?.toString() ?: "")
+            }
+            override fun beforeTextChanged(s2: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s2: CharSequence?, a: Int, b: Int, c: Int) {}
         })
         return isi
+    }
+
+    private fun terapkanSaring(kata: String) {
+        if (::adapterSaran.isInitialized) adapterSaran.saring(kata, hanyaNonaktif)
+        if (::adapterSistem.isInitialized) adapterSistem.saring(kata, hanyaNonaktif)
+    }
+
+    private fun segarkanJudulExpander(n: Int) {
+        jumlahSistemTerbaru = n
+        if (::judulExpander.isInitialized) {
+            judulExpander.text =
+                "Tampilkan semua aplikasi sistem ($n) " + if (expanderTerbuka) "▾" else "›"
+        }
     }
 
     private fun bangunPanelUnduhan(): View {
@@ -565,10 +599,10 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(2), 0, dp(4))
         }
-        isi.addView(teks("‹  Kembali ke Debloat", 15.5f, Gaya.AKSEN, tebal = true).apply {
+        isi.addView(teks("‹  Kembali ke System Apps", 15.5f, Gaya.AKSEN, tebal = true).apply {
             isClickable = true
             setPadding(dp(4), dp(4), dp(4), dp(10))
-            setOnClickListener { tampilkanPanel(panelDebloat, 1) }
+            setOnClickListener { tampilkanPanel(panelSistem, 1) }
         })
         isi.addView(teks(
             "Aplikasi sistem yang pernah di-Remove untuk pengguna ini. Memulihkan " +
@@ -632,19 +666,27 @@ class MainActivity : Activity() {
                 logView.text = log
                 aturPil(pilPort, "Port ${KunciPort.PORT} · ${if (port) "Terbuka" else "Tertutup"}", port)
                 aturPil(pilShell, "Shell · ${if (kanalOk) "Tersambung" else "Belum tersambung"}", kanalOk)
-                nilaiUnduhan.text = "${unduhan.size}"
-                nilaiSistem.text = "${sistem.size}"
-                nilaiPulih.text = if (terhapus.isEmpty()) "" else "${terhapus.size}"
-                nilaiKanal.text = if (kanalOk) "Tersambung ✓" else "Belum tersambung"
-                val barisSistem = mutableListOf<AdapterPaket.Baris>()
-                if (saran.isNotEmpty()) {
-                    barisSistem.add(AdapterPaket.Baris.Judul("Saran debloat — terpasang di perangkat ini"))
-                    saran.forEach { barisSistem.add(AdapterPaket.Baris.Paket(it)) }
-                    barisSistem.add(AdapterPaket.Baris.Judul("Semua aplikasi sistem"))
+                saranTerbaru = saran
+                segarkanJudulExpander(sistem.size)
+                tombolBulk.visibility =
+                    if (saran.any { it.aktif }) View.VISIBLE else View.GONE
+                if (terhapus.isEmpty()) {
+                    tautanPulih.visibility = View.GONE
+                } else {
+                    tautanPulih.visibility = View.VISIBLE
+                    tautanPulih.text = "Pulihkan aplikasi ter-Remove (${terhapus.size}) ›"
                 }
-                sistem.filter { it.pkg !in saranPkg }
-                    .forEach { barisSistem.add(AdapterPaket.Baris.Paket(it)) }
-                adapterSistem.gantiData(barisSistem)
+                adapterSaran.gantiData(
+                    if (saran.isEmpty()) {
+                        listOf(AdapterPaket.Baris.Judul("Tidak ada saran debloat yang terpasang"))
+                    } else {
+                        saran.map { AdapterPaket.Baris.Paket(it) }
+                    }
+                )
+                adapterSistem.gantiData(
+                    sistem.filter { it.pkg !in saranPkg }
+                        .map { AdapterPaket.Baris.Paket(it) }
+                )
                 adapterUnduhan.gantiData(
                     if (unduhan.isEmpty()) {
                         listOf(AdapterPaket.Baris.Judul("Tidak ada aplikasi unduhan terpasang"))
@@ -761,6 +803,44 @@ class MainActivity : Activity() {
                 muatSemua(false)
             }
         }.start()
+    }
+
+    /** Nonaktifkan semua saran debloat yang masih aktif, sesudah satu konfirmasi. */
+    private fun konfirmasiBulk() {
+        val target = saranTerbaru.filter { it.aktif && it.lindungi == null }
+        if (target.isEmpty()) {
+            pesan("Semua saran sudah nonaktif.")
+            return
+        }
+        val daftar = target.joinToString("\n") { "• ${it.label}" }
+        AlertDialog.Builder(this)
+            .setTitle("Nonaktifkan ${target.size} saran debloat?")
+            .setMessage(
+                "$daftar\n\nSemua aplikasi di atas berhenti bekerja sampai diaktifkan " +
+                    "lagi dari tab ini. Paket yang dilindungi tidak termasuk."
+            )
+            .setNegativeButton("Batal", null)
+            .setPositiveButton("Nonaktifkan semua") { _, _ ->
+                Thread {
+                    val log: (String) -> Unit = { LayananKunci.catat(this, it) }
+                    var berhasil = 0
+                    for (info in target) {
+                        if (KunciPort.aksiShell(
+                                this, "pm disable-user --user 0 ${info.pkg}", "disabled", log
+                            )
+                        ) berhasil++
+                    }
+                    val gagal = target.size - berhasil
+                    runOnUiThread {
+                        pesan(
+                            if (gagal == 0) "$berhasil saran dinonaktifkan."
+                            else "$berhasil berhasil, $gagal gagal — periksa kanal shell di tab Status."
+                        )
+                        muatSemua(false)
+                    }
+                }.start()
+            }
+            .show()
     }
 
     private fun pasangkan() {

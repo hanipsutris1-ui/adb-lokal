@@ -3,9 +3,11 @@ package com.omen.adblokal
 import android.content.Context
 import android.graphics.Typeface
 import android.view.View
+import android.graphics.drawable.Drawable
 import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
@@ -37,6 +39,26 @@ class AdapterPaket(
     private var tampil: List<Baris> = emptyList()
     private var kata = ""
     private var hanyaNonaktif = false
+
+    private val cacheIkon = HashMap<String, Drawable>()
+
+    /** Ikon aplikasi asli dari perangkat (ditembolek); kosong bila gagal dibaca. */
+    private fun ikonView(pkg: String): ImageView {
+        val iv = ImageView(ctx)
+        val lp = LinearLayout.LayoutParams(Gaya.dp(ctx, 36), Gaya.dp(ctx, 36))
+        lp.setMargins(0, 0, Gaya.dp(ctx, 12), 0)
+        iv.layoutParams = lp
+        val d = cacheIkon[pkg] ?: try {
+            ctx.packageManager.getApplicationIcon(pkg)
+        } catch (e: Exception) {
+            null
+        }
+        if (d != null) {
+            cacheIkon[pkg] = d
+            iv.setImageDrawable(d)
+        }
+        return iv
+    }
 
     fun gantiData(data: List<Baris>) {
         semua = data
@@ -145,6 +167,7 @@ class AdapterPaket(
             textSize = 13.5f
             setTextColor(Gaya.REDA)
         })
+        baris.addView(ikonView(info.pkg))
         baris.addView(kolom)
 
         when (mode) {
