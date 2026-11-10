@@ -11,6 +11,8 @@
     <!-- Diberikan sekali lewat ADB (pm grant) atau oleh aplikasi sendiri via shell ADB;
          tanpa izin ini aplikasi tetap bisa pairing & tcpip bila debugging sudah nyala. -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <!-- Supaya daftar aplikasi sistem & unduhan bisa dibaca utuh di Android 11+. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <application
         android:label="ADB Lokal"

@@ -10,6 +10,10 @@ class BootReceiver : BroadcastReceiver() {
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED,
             "android.intent.action.QUICKBOOT_POWERON" -> {
+                if (!KunciPort.penjagaAktif(context)) {
+                    LayananKunci.catat(context, "Boot terdeteksi — penjaga NONAKTIF (saklar), port tidak dikunci.")
+                    return
+                }
                 LayananKunci.catat(context, "Boot terdeteksi — layanan penjaga dimulai.")
                 LayananKunci.mulai(context)
             }

@@ -47,8 +47,61 @@ object KunciPort {
         return Triple(p.getBoolean("ok", false), p.getString("pesan", "belum pernah jalan") ?: "", p.getLong("waktu", 0))
     }
 
+    // ---- Saklar penjaga (v12): saklar Kunci Port di layar adalah saklar betulan. ----
+
+    private const val PREFS_SETELAN = "setelan"
+
+    fun penjagaAktif(ctx: Context): Boolean =
+        ctx.getSharedPreferences(PREFS_SETELAN, Context.MODE_PRIVATE)
+            .getBoolean("penjaga_aktif", true)
+
+    fun setPenjagaAktif(ctx: Context, aktif: Boolean) {
+        ctx.getSharedPreferences(PREFS_SETELAN, Context.MODE_PRIVATE).edit()
+            .putBoolean("penjaga_aktif", aktif).apply()
+    }
+
+    // ---- Kanal shell untuk panel Debloat (v12) — memakai sambungan libadb yang sama. ----
+
+    /** Uji cepat: apakah kanal shell menjawab? (Mengandaikan sambungan libadb mungkin sudah hidup.) */
+    fun ujiKanal(ctx: Context): Boolean =
+        shell(ctx, "echo adblokal-ok") { }.contains("adblokal-ok")
+
+    /** Pastikan kanal shell tersambung ke adbd perangkat sendiri; true bila siap dipakai. */
+    fun pastikanSambung(ctx: Context, log: (String) -> Unit): Boolean {
+        if (ujiKanal(ctx)) return true
+        if (punyaIzin(ctx)) {
+            try {
+                Settings.Global.putInt(ctx.contentResolver, "adb_wifi_enabled", 1)
+                log("Wireless debugging dinyalakan untuk kanal shell.")
+            } catch (e: Exception) { /* dicoba lagi lewat autoConnect */ }
+        }
+        val mgr = AdbManager.getInstance(ctx)
+        for (usaha in 1..3) {
+            val ok = try { mgr.autoConnect(ctx, 10_000) } catch (e: Exception) {
+                log("autoConnect kanal ke-$usaha: ${e.message}"); false
+            }
+            if (ok && ujiKanal(ctx)) return true
+            if (usaha < 3) Thread.sleep(3_000)
+        }
+        return ujiKanal(ctx)
+    }
+
+    /**
+     * Jalankan satu perintah lewat kanal shell; sukses bila keluaran mengandung [tanda].
+     * Panggil dari benang latar — penyambungan bisa memakan beberapa detik.
+     */
+    fun aksiShell(ctx: Context, perintah: String, tanda: String, log: (String) -> Unit): Boolean {
+        if (!pastikanSambung(ctx, log)) {
+            log("Kanal shell tidak tersambung — aksi dibatalkan: $perintah")
+            return false
+        }
+        val out = shell(ctx, perintah, log)
+        log("shell '$perintah' -> ${out.ifEmpty { "(kosong)" }}")
+        return out.contains(tanda)
+    }
+
     /** Jalankan perintah shell lewat sambungan libadb; kembalikan keluaran (boleh kosong). */
-    private fun shell(ctx: Context, perintah: String, log: (String) -> Unit): String {
+    fun shell(ctx: Context, perintah: String, log: (String) -> Unit): String {
         val mgr = AdbManager.getInstance(ctx)
         var stream: io.github.muntashirakon.adb.AdbStream? = null
         return try {
