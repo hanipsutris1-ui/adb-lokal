@@ -33,45 +33,60 @@ import java.util.Locale
 /**
  * Layar utama ADB Lokal.
  *
- * Tampilan per tab bergaya tvOS (gradasi gelap + kartu kaca) dengan saklar
- * gaya Launcher Luxio; fungsi penjaga port 5555 sama persis dengan v11
- * (KunciPort/LayananKunci/BootReceiver tidak berubah perilakunya), ditambah
- * alat debloat ala tvOS yang berjalan lewat kanal shell libadb yang sudah
- * ada: System Apps (saklar nonaktif/aktif + saran debloat), Downloaded Apps
- * (hapus), dan Restore Removed Apps (pulihkan) dari tab System Apps.
+ * Susunan mengikuti pratinjau final yang disetujui pemilik (artefak rancangan,
+ * berkas "Pratinjau HU v2"): empat tab — Status, Sistem, Dipulihkan,
+ * Aplikasi saya — bergaya tvOS (gradasi gelap + kartu kaca) dengan saklar gaya
+ * Launcher Luxio. Tab Sistem berbentuk akordeon dua panel (Saran debloat /
+ * Aplikasi sistem lainnya): membuka satu panel menutup panel lainnya.
  *
- * Semua daftar dibaca langsung dari perangkat yang menjalankan aplikasi,
- * dan perlindungan paket dihitung per perangkat — aplikasi ini bisa dipakai
- * di HU Android 11+ lain, bukan hanya HU pemilik pertama.
+ * Mesinnya TIDAK berubah dari v11–v16: KunciPort/LayananKunci/BootReceiver/
+ * AdbManager/DataPaket/AdapterPaket persis sama — yang ditulis ulang hanya
+ * susunan tampilannya. Semua daftar & status dibaca langsung dari perangkat
+ * yang menjalankan aplikasi, dan perlindungan paket dihitung per perangkat.
  */
 class MainActivity : Activity() {
 
+    private enum class Segmen { SARAN, SEMUA, NONAKTIF }
+
     // ---- keadaan ----
     @Volatile private var kanalOk = false
-    private var hanyaNonaktif = false
+    private var uiSiap = false
+    private var segmen = Segmen.SARAN
+    private var panelBuka = 1 // akordeon Sistem: 1 = Saran, 2 = Sistem lainnya
 
     // ---- tampilan ----
     private lateinit var pilPort: TextView
     private lateinit var pilShell: TextView
     private lateinit var tabTeks: List<TextView>
+    private lateinit var tabPulihTeks: TextView
     private lateinit var panelStatus: View
     private lateinit var panelSistem: View
     private lateinit var panelUnduhan: View
     private lateinit var panelPulih: View
-    private lateinit var teksStatus: TextView
+    private lateinit var heroJudul: TextView
+    private lateinit var metrikIzin: TextView
+    private lateinit var metrikWd: TextView
+    private lateinit var metrikKanal: TextView
+    private lateinit var metrikHasil: TextView
+    private lateinit var teksHasil: TextView
     private lateinit var saklarPenjaga: Switch
     private lateinit var tombolBulk: Button
-    private lateinit var judulExpander: TextView
+    private lateinit var teksSaranAktif: TextView
+    private lateinit var kepalaPanel1: TextView
+    private lateinit var kepalaPanel2: TextView
+    private lateinit var badanPanel1: View
+    private lateinit var badanPanel2: View
     private lateinit var daftarSistemView: ListView
-    private lateinit var tautanPulih: TextView
-    private var expanderTerbuka = false
     private var jumlahSistemTerbaru = 0
+    private var jumlahSaranTerbaru = 0
     private var saranTerbaru: List<DataPaket.Info> = emptyList()
     private lateinit var logView: TextView
     private lateinit var isiLipat: View
     private lateinit var judulLipat: TextView
     private lateinit var portField: EditText
     private lateinit var kodeField: EditText
+    private lateinit var segmenTeks: List<TextView>
+    private lateinit var cariField: EditText
     private lateinit var adapterSaran: AdapterPaket
     private lateinit var adapterSistem: AdapterPaket
     private lateinit var adapterUnduhan: AdapterPaket
@@ -82,12 +97,13 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buatUi()
+        uiSiap = true
         muatSemua(probeKanal = true)
     }
 
     override fun onResume() {
         super.onResume()
-        if (::teksStatus.isInitialized) muatSemua(probeKanal = false)
+        if (uiSiap) muatSemua(probeKanal = false)
     }
 
     // ================= Pembangun tampilan kecil =================
@@ -110,6 +126,17 @@ class MainActivity : Activity() {
         setOnClickListener { aksi() }
     }
 
+    /** Tombol utama biru aksen (Jalankan sekarang di pratinjau). */
+    private fun tombolUtama(isi: String, aksi: () -> Unit): Button = Button(this).apply {
+        text = isi
+        textSize = 14.5f
+        isAllCaps = false
+        setTextColor(Color.rgb(0x0B, 0x16, 0x20))
+        background = Gaya.kaca(this@MainActivity, 14).apply { setColor(Gaya.AKSEN) }
+        setPadding(dp(14), dp(10), dp(14), dp(10))
+        setOnClickListener { aksi() }
+    }
+
     private fun pil(isi: String): TextView = TextView(this).apply {
         text = isi
         textSize = 13f
@@ -118,10 +145,11 @@ class MainActivity : Activity() {
         setPadding(dp(13), dp(6), dp(13), dp(6))
     }
 
+    /** Pil status selalu membaca keadaan sebenarnya; buruk = titik kuning. */
     private fun aturPil(tv: TextView, label: String, baik: Boolean) {
         val s = SpannableString("● $label")
         s.setSpan(
-            ForegroundColorSpan(if (baik) Gaya.HIJAU else Color.rgb(0x8E, 0x8E, 0x93)),
+            ForegroundColorSpan(if (baik) Gaya.HIJAU else Gaya.KUNING),
             0, 1, 0
         )
         tv.text = s
@@ -136,6 +164,23 @@ class MainActivity : Activity() {
         )
         lp.setMargins(0, 0, 0, dp(14))
         layoutParams = lp
+    }
+
+    /** Kotak metrik kecil di kartu hero (label di atas, nilai tebal di bawah). */
+    private fun kotakMetrik(label: String): TextView {
+        val wadah = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = Gaya.kaca(this@MainActivity, 16)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { setMargins(dp(4), dp(4), dp(4), dp(4)) }
+        }
+        wadah.addView(teks(label, 11.5f, Gaya.REDA))
+        val nilai = teks("…", 16f, Gaya.TINTA, tebal = true)
+        wadah.addView(nilai)
+        // Kembalikan TextView nilai; wadahnya ditambahkan pemanggil lewat tag.
+        nilai.tag = wadah
+        return nilai
     }
 
     /** Saklar gaya Luxio yang berdiri sendiri (dipakai kartu Kunci Port). */
@@ -178,34 +223,6 @@ class MainActivity : Activity() {
         return baris
     }
 
-    /** Baris menu ala tvOS: label kiri, nilai + › kanan. Mengembalikan TextView nilai. */
-    private fun barisMenu(
-        induk: LinearLayout, label: String, nilaiAwal: String, aksi: () -> Unit
-    ): TextView {
-        val baris = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = Gaya.kaca(this@MainActivity, 16)
-            setPadding(dp(18), dp(16), dp(18), dp(16))
-            val lp = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            lp.setMargins(0, 0, 0, dp(10))
-            layoutParams = lp
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { aksi() }
-        }
-        baris.addView(teks(label, 16.5f, Gaya.TINTA).apply {
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        val nilai = teks(nilaiAwal, 15f, Gaya.KEDUA)
-        baris.addView(nilai)
-        baris.addView(teks("  ›", 17f, Gaya.KEDUA))
-        induk.addView(baris)
-        return nilai
-    }
-
     // ================= Susunan halaman & panel =================
 
     private fun buatUi() {
@@ -217,7 +234,7 @@ class MainActivity : Activity() {
 
         // Kepala — tetap di semua tab.
         root.addView(teks("ADB Lokal", 30f, Gaya.TINTA, tebal = true))
-        root.addView(teks("Penjaga ADB & alat debloat head unit", 14f, Gaya.KEDUA).apply {
+        root.addView(teks("Penjaga ADB head unit", 14f, Gaya.KEDUA).apply {
             val lp = layoutParams as? LinearLayout.LayoutParams
                 ?: LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -240,8 +257,8 @@ class MainActivity : Activity() {
         (pilShell.layoutParams as LinearLayout.LayoutParams).setMargins(dp(10), 0, 0, 0)
         root.addView(barisPil)
 
-        // Bar tab kaca model segmented.
-        val namaTab = listOf("Status", "System Apps", "Downloaded Apps")
+        // Bar tab kaca model segmented — empat tab.
+        val namaTab = listOf("Status", "Sistem", "Dipulihkan", "Aplikasi saya")
         val tabBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             background = Gaya.kaca(this@MainActivity, 999)
@@ -265,6 +282,7 @@ class MainActivity : Activity() {
             }
         }
         tabTeks.forEach { tabBar.addView(it) }
+        tabPulihTeks = tabTeks[2]
         root.addView(tabBar)
 
         // Wadah panel.
@@ -275,27 +293,27 @@ class MainActivity : Activity() {
         }
         panelStatus = bangunPanelStatus()
         panelSistem = bangunPanelSistem()
-        panelUnduhan = bangunPanelUnduhan()
         panelPulih = bangunPanelPulih()
-        listOf(panelStatus, panelSistem, panelUnduhan, panelPulih)
+        panelUnduhan = bangunPanelUnduhan()
+        listOf(panelStatus, panelSistem, panelPulih, panelUnduhan)
             .forEach { wadah.addView(it) }
         root.addView(wadah)
 
         setContentView(root)
         val tabAwal = getSharedPreferences("setelan", MODE_PRIVATE)
-            .getInt("tab_terakhir", 0).coerceIn(0, 2)
+            .getInt("tab_terakhir", 0).coerceIn(0, 3)
         bukaTab(tabAwal)
     }
 
     private fun bukaTab(i: Int) {
-        val panel = listOf(panelStatus, panelSistem, panelUnduhan)[i]
+        val panel = listOf(panelStatus, panelSistem, panelPulih, panelUnduhan)[i]
         tampilkanPanel(panel, i)
     }
 
     private fun tampilkanPanel(panel: View, tabAktif: Int) {
         getSharedPreferences("setelan", MODE_PRIVATE).edit()
             .putInt("tab_terakhir", tabAktif).apply()
-        listOf(panelStatus, panelSistem, panelUnduhan, panelPulih)
+        listOf(panelStatus, panelSistem, panelPulih, panelUnduhan)
             .forEach { it.visibility = if (it === panel) View.VISIBLE else View.GONE }
         tabTeks.forEachIndexed { i, tv ->
             if (i == tabAktif) {
@@ -313,28 +331,64 @@ class MainActivity : Activity() {
     private fun gulir(isi: LinearLayout): ScrollView = ScrollView(this).apply { addView(isi) }
 
     private fun bangunPanelStatus(): View {
-        val isi = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        // Dua kolom seperti pratinjau: kiri hero + kunci port, kanan catatan +
+        // pemasangan + catatan perlindungan. Seluruhnya di dalam gulir.
+        val kolom2 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(2), 0, dp(8))
         }
-        val kartuStatus = kartu()
-        teksStatus = teks("Memeriksa keadaan…", 15f, Gaya.TINTA, tebal = true).apply {
-            setLineSpacing(dp(4).toFloat(), 1f)
+        val kiri = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f)
+                .apply { setMargins(0, 0, dp(11), 0) }
         }
-        kartuStatus.addView(teksStatus)
-        isi.addView(kartuStatus)
+        val kanan = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { setMargins(dp(11), 0, 0, 0) }
+        }
+        kolom2.addView(kiri)
+        kolom2.addView(kanan)
 
-        val kartuKunci = kartu()
-        kartuKunci.addView(barisSaklarKartu(
-            "Kunci port ${KunciPort.PORT}",
-            "Penjaga mengunci port tiap HU selesai booting",
-            KunciPort.penjagaAktif(this)
-        ) { nyala -> saklarPenjagaBerubah(nyala) })
+        // --- Hero keadaan sekarang ---
+        val hero = kartu()
+        hero.addView(teks("KEADAAN SEKARANG", 12f, Gaya.REDA, tebal = true))
+        heroJudul = teks("Memeriksa keadaan…", 28f, Gaya.TINTA, tebal = true).apply {
+            setPadding(0, dp(8), 0, dp(8))
+            setLineSpacing(dp(2).toFloat(), 1f)
+        }
+        hero.addView(heroJudul)
+        hero.addView(teks(
+            "Penjaga mengunci port setiap kali head unit selesai booting, jadi " +
+                "perangkat bisa dijangkau dari jaringan tanpa membuka Opsi pengembang.",
+            14f, Gaya.KEDUA
+        ).apply { setLineSpacing(dp(3).toFloat(), 1f) })
+        val grid = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(10), 0, 0)
+        }
+        val barisM1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val barisM2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        metrikIzin = kotakMetrik("Izin khusus")
+        metrikWd = kotakMetrik("Wireless debugging")
+        metrikKanal = kotakMetrik("Kanal shell")
+        metrikHasil = kotakMetrik("Hasil terakhir")
+        barisM1.addView(metrikIzin.tag as View)
+        barisM1.addView(metrikWd.tag as View)
+        barisM2.addView(metrikKanal.tag as View)
+        barisM2.addView(metrikHasil.tag as View)
+        grid.addView(barisM1)
+        grid.addView(barisM2)
+        hero.addView(grid)
+        teksHasil = teks("Hasil terakhir: —", 12.5f, Gaya.KEDUA).apply {
+            setPadding(dp(4), dp(8), dp(4), 0)
+        }
+        hero.addView(teksHasil)
         val barisTombol = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(12), 0, 0)
+            setPadding(0, dp(14), 0, 0)
         }
-        barisTombol.addView(tombol("Jalankan sekarang") {
+        barisTombol.addView(tombolUtama("Jalankan sekarang") {
             LayananKunci.catat(this, "Dijalankan manual dari layar utama.")
             LayananKunci.mulai(this)
             pesan("Layanan penjaga dimulai — lihat Catatan kerja.")
@@ -347,28 +401,49 @@ class MainActivity : Activity() {
             lp.setMargins(dp(10), 0, 0, 0)
             layoutParams = lp
         })
-        kartuKunci.addView(barisTombol)
-        isi.addView(kartuKunci)
+        hero.addView(barisTombol)
+        kiri.addView(hero)
 
-        // Bagian lipat: Pemasangan & Catatan (warisan v11, tetap utuh fungsinya).
-        judulLipat = teks("Pemasangan & Catatan  ▸", 16.5f, Gaya.TINTA, tebal = true).apply {
+        // --- Kartu kunci port ---
+        val kartuKunci = kartu()
+        kartuKunci.addView(barisSaklarKartu(
+            "Kunci port ${KunciPort.PORT}",
+            "Dinyalakan otomatis setiap head unit selesai booting",
+            KunciPort.penjagaAktif(this)
+        ) { nyala -> saklarPenjagaBerubah(nyala) })
+        kiri.addView(kartuKunci)
+
+        // --- Catatan kerja (kanan) ---
+        val kartuLog = kartu()
+        kartuLog.addView(teks("CATATAN KERJA", 12f, Gaya.REDA, tebal = true).apply {
+            setPadding(0, 0, 0, dp(6))
+        })
+        logView = teks("(memuat…)", 12f, Gaya.REDA)
+        kartuLog.addView(logView)
+        kanan.addView(kartuLog)
+
+        // --- Akordeon: Cara pemasangan awal (kanan) ---
+        judulLipat = teks("Cara pemasangan awal  ▸", 16.5f, Gaya.TINTA, tebal = true).apply {
             isClickable = true
             setPadding(dp(2), dp(6), dp(2), dp(10))
             setOnClickListener {
                 val buka = isiLipat.visibility != View.VISIBLE
                 isiLipat.visibility = if (buka) View.VISIBLE else View.GONE
-                text = if (buka) "Pemasangan & Catatan  ▾" else "Pemasangan & Catatan  ▸"
+                text = if (buka) "Cara pemasangan awal  ▾" else "Cara pemasangan awal  ▸"
             }
         }
-        isi.addView(judulLipat)
+        kanan.addView(judulLipat)
         val lipat = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val kartuPasang = kartu()
         kartuPasang.addView(teks(
             "Sekali saja, saat pemasangan awal di perangkat baru:\n" +
-                "1) Buka Opsi pengembang → Wireless debugging → \"Pasangkan perangkat dengan kode pemasangan\". " +
-                "Layar itu menampilkan kode 6 digit dan alamat IP:port — angka sesudah titik dua adalah port pemasangan.\n" +
-                "2) Isi keduanya di sini selagi dialog itu masih terbuka, lalu tekan Pasangkan.\n" +
-                "3) Sesudah berhasil, aplikasi memberi izinnya sendiri dan langsung mengunci port.",
+                "1) Nyalakan \"Wireless debugging\" di Pengaturan → Sistem → Opsi pengembang.\n" +
+                "2) Ketuk \"Pasangkan perangkat dengan kode pemasangan\" sampai kode 6 digit " +
+                "dan alamat IP:port tampil — angka sesudah titik dua adalah port pemasangan.\n" +
+                "3) Buka ADB Lokal dalam layar belah, isi port & kode 6 digit itu di bawah " +
+                "selagi dialognya masih terbuka, lalu tekan Pasangkan.\n" +
+                "4) Selesai — pemasangan cukup sekali; ADB Lokal memberi izinnya sendiri " +
+                "dan mengunci port ${KunciPort.PORT} otomatis setiap head unit selesai booting.",
             14f, Gaya.REDA
         ).apply { setLineSpacing(dp(3).toFloat(), 1f) })
         kartuPasang.addView(tombol("Buka Opsi pengembang") {
@@ -413,26 +488,30 @@ class MainActivity : Activity() {
             )
         })
         lipat.addView(kartuPasang)
-        val kartuLog = kartu()
-        kartuLog.addView(teks("Catatan kerja", 15f, Gaya.TINTA, tebal = true).apply {
-            setPadding(0, 0, 0, dp(6))
-        })
-        logView = teks("(memuat…)", 12f, Gaya.REDA)
-        kartuLog.addView(logView)
-        lipat.addView(kartuLog)
-        lipat.addView(teks(
-            "Dilindungi & tidak bisa diubah: sistem mobil (com.tw.* dan sejenisnya), " +
-                "pengaturan mobil, launcher Home yang sedang dipakai, inti Android, " +
-                "Tailscale, dan aplikasi ini sendiri. Semua daftar & status dibaca " +
-                "langsung dari perangkat ini.",
+        lipat.visibility = if (KunciPort.punyaIzin(this)) View.GONE else View.VISIBLE
+        if (lipat.visibility == View.VISIBLE) judulLipat.text = "Cara pemasangan awal  ▾"
+        isiLipat = lipat
+        kanan.addView(lipat)
+        kanan.addView(teks(
+            "Terlindungi dan tidak bisa diubah: sistem mobil, Cardoor, Launcher Luxio, " +
+                "Tailscale, dan ADB Lokal. Semua daftar & status dibaca langsung dari perangkat ini.",
             12f, Gaya.KEDUA
         ).apply { setPadding(dp(4), 0, dp(4), dp(2)) })
-        lipat.visibility = if (KunciPort.punyaIzin(this)) View.GONE else View.VISIBLE
-        if (lipat.visibility == View.VISIBLE) judulLipat.text = "Pemasangan & Catatan  ▾"
-        isiLipat = lipat
-        isi.addView(lipat)
-        return gulir(isi)
+        return gulir(kolom2)
     }
+
+    /** Kepala panel akordeon (judul + jumlah + penanda ▸/▾), bisa diklik. */
+    private fun kepalaAkordeon(aksi: () -> Unit): TextView =
+        teks("", 16f, Gaya.TINTA, tebal = true).apply {
+            background = Gaya.kaca(this@MainActivity, 16)
+            setPadding(dp(18), dp(14), dp(18), dp(14))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { aksi() }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, dp(6), 0, dp(6)) }
+        }
 
     private fun bangunPanelSistem(): View {
         val isi = LinearLayout(this).apply {
@@ -443,67 +522,80 @@ class MainActivity : Activity() {
             "Saklar menyala = aplikasi aktif. Paket berlabel Dilindungi tidak bisa diubah.",
             13f, Gaya.KEDUA
         ).apply { setPadding(dp(4), 0, dp(4), dp(8)) })
-        val cari = EditText(this).apply {
-            hint = "Cari aplikasi sistem…"
+
+        // Baris cari + segmen Saran/Semua/Nonaktif (pola pratinjau).
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val lp = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            lp.setMargins(0, 0, 0, dp(8))
+            layoutParams = lp
+        }
+        cariField = EditText(this).apply {
+            hint = "Cari nama aplikasi…"
             setTextColor(Gaya.TINTA)
             setHintTextColor(Color.argb(140, 255, 255, 255))
             background = Gaya.kaca(this@MainActivity, 14)
             setPadding(dp(14), dp(10), dp(14), dp(10))
             textSize = 15f
-            val lp = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            lp.setMargins(0, 0, 0, dp(8))
-            layoutParams = lp
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        isi.addView(cari)
-        val chip = teks("Hanya yang nonaktif", 13.5f, Gaya.KEDUA).apply {
-            background = Gaya.pil(this@MainActivity)
-            setPadding(dp(13), dp(7), dp(13), dp(7))
-            isClickable = true
-            setOnClickListener {
-                hanyaNonaktif = !hanyaNonaktif
-                if (hanyaNonaktif) {
-                    background = Gaya.pil(this@MainActivity).apply {
-                        setColor(Color.argb(46, 0x5F, 0xB4, 0xFF))
-                        setStroke(dp(1), Color.argb(115, 0x5F, 0xB4, 0xFF))
-                    }
-                    setTextColor(Gaya.TINTA)
-                } else {
-                    background = Gaya.pil(this@MainActivity)
-                    setTextColor(Gaya.KEDUA)
-                }
-                terapkanSaring(cari.text.toString())
+        bar.addView(cariField)
+        val segBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = Gaya.kaca(this@MainActivity, 999)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dp(10), 0, 0, 0) }
+        }
+        val namaSegmen = listOf("Saran", "Semua", "Nonaktif")
+        segmenTeks = namaSegmen.mapIndexed { i, nama ->
+            TextView(this).apply {
+                text = nama
+                textSize = 14f
+                gravity = Gravity.CENTER
+                setPadding(dp(14), dp(8), dp(14), dp(8))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { pilihSegmen(Segmen.values()[i]) }
             }
         }
-        val barisChip = LinearLayout(this).apply {
+        segmenTeks.forEach { segBar.addView(it) }
+        bar.addView(segBar)
+        isi.addView(bar)
+
+        // --- Akordeon panel 1: Saran debloat ---
+        kepalaPanel1 = kepalaAkordeon { bukaPanelSistem(1) }
+        isi.addView(kepalaPanel1)
+        val badan1 = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val barisSaran = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            val lp = LinearLayout.LayoutParams(
+            gravity = Gravity.CENTER_VERTICAL
+            background = Gaya.kaca(this@MainActivity, 16).apply {
+                setColor(Color.argb(18, 0x5F, 0xB4, 0xFF))
+                setStroke(dp(1), Color.argb(77, 0x5F, 0xB4, 0xFF))
+            }
+            setPadding(dp(16), dp(8), dp(10), dp(8))
+            layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            lp.setMargins(0, 0, 0, dp(4))
-            layoutParams = lp
+            ).apply { setMargins(0, 0, 0, dp(6)) }
         }
-        barisChip.addView(chip)
-        isi.addView(barisChip)
-        isi.addView(teks(
-            "Saran debloat — terpasang di perangkat ini", 13f, Gaya.KEDUA, tebal = true
-        ).apply { setPadding(dp(4), dp(2), dp(4), dp(6)) })
-        tombolBulk = tombol("Nonaktifkan semua saran yang masih aktif") { konfirmasiBulk() }.apply {
-            val lp = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            lp.setMargins(0, 0, 0, dp(8))
-            layoutParams = lp
-            visibility = View.GONE
+        teksSaranAktif = teks("… saran masih aktif", 15f, Gaya.TINTA, tebal = true).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        isi.addView(tombolBulk)
+        barisSaran.addView(teksSaranAktif)
+        tombolBulk = tombol("Nonaktifkan semua saran") { konfirmasiBulk() }
+        barisSaran.addView(tombolBulk)
+        badan1.addView(barisSaran)
         adapterSaran = AdapterPaket(
             this, AdapterPaket.Mode.SISTEM,
             padaSaklar = { info, nyala -> saklarSistemBerubah(info, nyala) },
             padaTombol = { }
         )
-        isi.addView(ListView(this).apply {
+        badan1.addView(ListView(this).apply {
             adapter = adapterSaran
             divider = null
             dividerHeight = 0
@@ -512,16 +604,16 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
             )
         })
-        judulExpander = teks("Tampilkan semua aplikasi sistem ›", 15f, Gaya.TINTA, tebal = true).apply {
-            isClickable = true
-            setPadding(dp(4), dp(10), dp(4), dp(8))
-            setOnClickListener {
-                expanderTerbuka = !expanderTerbuka
-                daftarSistemView.visibility = if (expanderTerbuka) View.VISIBLE else View.GONE
-                segarkanJudulExpander(jumlahSistemTerbaru)
-            }
-        }
-        isi.addView(judulExpander)
+        badanPanel1 = badan1
+        isi.addView(badan1.apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        })
+
+        // --- Akordeon panel 2: Aplikasi sistem lainnya ---
+        kepalaPanel2 = kepalaAkordeon { bukaPanelSistem(2) }
+        isi.addView(kepalaPanel2)
         adapterSistem = AdapterPaket(
             this, AdapterPaket.Mode.SISTEM,
             padaSaklar = { info, nyala -> saklarSistemBerubah(info, nyala) },
@@ -532,58 +624,87 @@ class MainActivity : Activity() {
             divider = null
             dividerHeight = 0
             setCacheColorHint(Color.TRANSPARENT)
-            visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
             )
         }
+        badanPanel2 = daftarSistemView
         isi.addView(daftarSistemView)
-        tautanPulih = teks("", 13.5f, Gaya.KEDUA).apply {
-            isClickable = true
-            setPadding(dp(4), dp(8), dp(4), dp(2))
-            visibility = View.GONE
-            setOnClickListener { tampilkanPanel(panelPulih, 1) }
-        }
-        isi.addView(tautanPulih)
-        cari.addTextChangedListener(object : TextWatcher {
+
+        cariField.addTextChangedListener(object : TextWatcher {
             override fun afterTextChanged(s2: Editable?) {
                 terapkanSaring(s2?.toString() ?: "")
             }
             override fun beforeTextChanged(s2: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s2: CharSequence?, a: Int, b: Int, c: Int) {}
         })
+        segarkanSegmen()
+        segarkanAkordeon()
         return isi
     }
 
-    private fun terapkanSaring(kata: String) {
-        if (::adapterSaran.isInitialized) adapterSaran.saring(kata, hanyaNonaktif)
-        if (::adapterSistem.isInitialized) adapterSistem.saring(kata, hanyaNonaktif)
+    private fun pilihSegmen(s: Segmen) {
+        segmen = s
+        if (s == Segmen.SARAN) panelBuka = 1
+        segarkanSegmen()
+        segarkanAkordeon()
+        terapkanSaring(if (::cariField.isInitialized) cariField.text.toString() else "")
     }
 
-    private fun segarkanJudulExpander(n: Int) {
-        jumlahSistemTerbaru = n
-        if (::judulExpander.isInitialized) {
-            judulExpander.text =
-                "Tampilkan semua aplikasi sistem ($n) " + if (expanderTerbuka) "▾" else "›"
+    private fun segarkanSegmen() {
+        if (!::segmenTeks.isInitialized) return
+        segmenTeks.forEachIndexed { i, tv ->
+            if (Segmen.values()[i] == segmen) {
+                tv.background = Gaya.kaca(this, 999).apply { setColor(Color.rgb(0xE8, 0xE8, 0xEA)) }
+                tv.setTextColor(Color.rgb(0x1C, 0x1C, 0x1E))
+                tv.setTypeface(tv.typeface, Typeface.BOLD)
+            } else {
+                tv.background = null
+                tv.setTextColor(Gaya.KEDUA)
+                tv.setTypeface(tv.typeface, Typeface.NORMAL)
+            }
         }
     }
 
-    private fun bangunPanelUnduhan(): View {
+    private fun bukaPanelSistem(n: Int) {
+        panelBuka = n
+        segarkanAkordeon()
+    }
+
+    /** Akordeon ketat: panel yang terbuka badannya tampak, yang lain tertutup. */
+    private fun segarkanAkordeon() {
+        if (!::badanPanel1.isInitialized) return
+        badanPanel1.visibility = if (panelBuka == 1) View.VISIBLE else View.GONE
+        badanPanel2.visibility = if (panelBuka == 2) View.VISIBLE else View.GONE
+        kepalaPanel1.text = "Saran debloat ($jumlahSaranTerbaru)  " + if (panelBuka == 1) "▾" else "▸"
+        kepalaPanel2.text = "Aplikasi sistem lainnya ($jumlahSistemTerbaru)  " + if (panelBuka == 2) "▾" else "▸"
+    }
+
+    private fun terapkanSaring(kata: String) {
+        val nonaktifSaja = segmen == Segmen.NONAKTIF
+        if (::adapterSaran.isInitialized) adapterSaran.saring(kata, nonaktifSaja)
+        if (::adapterSistem.isInitialized) adapterSistem.saring(kata, nonaktifSaja)
+    }
+
+    private fun bangunPanelPulih(): View {
         val isi = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(2), 0, dp(4))
         }
+        isi.addView(teks("Aplikasi sistem yang pernah dihapus", 20f, Gaya.TINTA, tebal = true).apply {
+            setPadding(dp(4), dp(2), dp(4), dp(4))
+        })
         isi.addView(teks(
-            "Menghapus = uninstall dari perangkat; pasang lagi dari toko untuk mengembalikan.",
+            "Pulihkan untuk memasangnya lagi tanpa file APK. Daftar ini dibaca dari perangkat.",
             13f, Gaya.KEDUA
         ).apply { setPadding(dp(4), 0, dp(4), dp(8)) })
-        adapterUnduhan = AdapterPaket(
-            this, AdapterPaket.Mode.UNDUHAN,
+        adapterPulih = AdapterPaket(
+            this, AdapterPaket.Mode.PULIHKAN,
             padaSaklar = { _, _ -> },
-            padaTombol = { info -> konfirmasiHapus(info) }
+            padaTombol = { info -> pulihkanPaket(info) }
         )
         isi.addView(ListView(this).apply {
-            adapter = adapterUnduhan
+            adapter = adapterPulih
             divider = null
             dividerHeight = 0
             setCacheColorHint(Color.TRANSPARENT)
@@ -594,28 +715,25 @@ class MainActivity : Activity() {
         return isi
     }
 
-    private fun bangunPanelPulih(): View {
+    private fun bangunPanelUnduhan(): View {
         val isi = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(2), 0, dp(4))
         }
-        isi.addView(teks("‹  Kembali ke System Apps", 15.5f, Gaya.AKSEN, tebal = true).apply {
-            isClickable = true
-            setPadding(dp(4), dp(4), dp(4), dp(10))
-            setOnClickListener { tampilkanPanel(panelSistem, 1) }
+        isi.addView(teks("Aplikasi yang Anda pasang", 20f, Gaya.TINTA, tebal = true).apply {
+            setPadding(dp(4), dp(2), dp(4), dp(4))
         })
         isi.addView(teks(
-            "Aplikasi sistem yang pernah di-Remove untuk pengguna ini. Memulihkan " +
-                "memasangnya lagi tanpa perlu file APK.",
+            "Hapus untuk mencopot dari HU. Pasang lagi dari toko kalau ingin mengembalikannya.",
             13f, Gaya.KEDUA
         ).apply { setPadding(dp(4), 0, dp(4), dp(8)) })
-        adapterPulih = AdapterPaket(
-            this, AdapterPaket.Mode.PULIHKAN,
+        adapterUnduhan = AdapterPaket(
+            this, AdapterPaket.Mode.UNDUHAN,
             padaSaklar = { _, _ -> },
-            padaTombol = { info -> pulihkanPaket(info) }
+            padaTombol = { info -> konfirmasiHapus(info) }
         )
         isi.addView(ListView(this).apply {
-            adapter = adapterPulih
+            adapter = adapterUnduhan
             divider = null
             dividerHeight = 0
             setCacheColorHint(Color.TRANSPARENT)
@@ -649,33 +767,43 @@ class MainActivity : Activity() {
             val terhapus = DataPaket.daftarTerhapus(this)
             val saran = DataPaket.saranYangAda(sistem)
             val saranPkg = saran.map { it.pkg }.toHashSet()
+            val sistemLain = sistem.filter { it.pkg !in saranPkg }
             val capWaktu = if (waktu > 0) {
                 SimpleDateFormat("dd-MM HH:mm", Locale.US).format(Date(waktu))
             } else "—"
-            val ringkas = buildString {
-                appendLine("Izin khusus (WRITE_SECURE_SETTINGS): ${if (izin) "ADA ✓" else "BELUM ADA"}")
-                appendLine("Wireless debugging: ${if (wd) "NYALA" else "mati"}")
-                appendLine("Port ${KunciPort.PORT}: ${if (port) "TERBUKA ✓" else "tertutup"}")
-                appendLine("Kanal shell (ADB lokal): ${if (kanalOk) "TERSAMBUNG ✓" else "belum tersambung"}")
-                append("Hasil terakhir ($capWaktu): ${if (ok) "BERHASIL" else "—"} · $pesanHasil")
-            }
             val log = LayananKunci.bacaLog(this)
             runOnUiThread {
-                if (!::teksStatus.isInitialized) return@runOnUiThread
-                teksStatus.text = ringkas
+                if (!uiSiap) return@runOnUiThread
+                // Hero + metrik (menggantikan teks ringkas lama).
+                val judul = SpannableString(
+                    if (port) "ADB terjaga di port ${KunciPort.PORT}" else "Port ${KunciPort.PORT} belum terjaga"
+                )
+                val dari = judul.indexOf("port")
+                if (dari >= 0) {
+                    judul.setSpan(
+                        ForegroundColorSpan(if (port) Gaya.HIJAU else Gaya.KUNING),
+                        dari, judul.length, 0
+                    )
+                }
+                heroJudul.text = judul
+                metrikIzin.text = if (izin) "Ada ✓" else "Belum ada"
+                metrikWd.text = if (wd) "Nyala" else "Mati"
+                metrikKanal.text = if (kanalOk) "Tersambung ✓" else "Belum tersambung"
+                metrikHasil.text = if (ok) "Berhasil" else "—"
+                teksHasil.text = "Hasil terakhir ($capWaktu): ${if (ok) "BERHASIL" else "—"} · $pesanHasil"
                 logView.text = log
                 aturPil(pilPort, "Port ${KunciPort.PORT} · ${if (port) "Terbuka" else "Tertutup"}", port)
                 aturPil(pilShell, "Shell · ${if (kanalOk) "Tersambung" else "Belum tersambung"}", kanalOk)
                 saranTerbaru = saran
-                segarkanJudulExpander(sistem.size)
-                tombolBulk.visibility =
-                    if (saran.any { !it.nonaktif }) View.VISIBLE else View.GONE
-                if (terhapus.isEmpty()) {
-                    tautanPulih.visibility = View.GONE
-                } else {
-                    tautanPulih.visibility = View.VISIBLE
-                    tautanPulih.text = "Pulihkan aplikasi ter-Remove (${terhapus.size}) ›"
-                }
+                jumlahSaranTerbaru = saran.size
+                jumlahSistemTerbaru = sistemLain.size
+                val saranAktif = saran.count { !it.nonaktif }
+                teksSaranAktif.text =
+                    if (saranAktif > 0) "$saranAktif saran masih aktif" else "Semua saran sudah nonaktif"
+                tombolBulk.visibility = if (saranAktif > 0) View.VISIBLE else View.GONE
+                tabPulihTeks.text =
+                    if (terhapus.isEmpty()) "Dipulihkan" else "Dipulihkan (${terhapus.size})"
+                segarkanAkordeon()
                 adapterSaran.gantiData(
                     if (saran.isEmpty()) {
                         listOf(AdapterPaket.Baris.Judul("Tidak ada saran debloat yang terpasang"))
@@ -684,8 +812,11 @@ class MainActivity : Activity() {
                     }
                 )
                 adapterSistem.gantiData(
-                    sistem.filter { it.pkg !in saranPkg }
-                        .map { AdapterPaket.Baris.Paket(it) }
+                    if (sistemLain.isEmpty()) {
+                        listOf(AdapterPaket.Baris.Judul("Tidak ada aplikasi sistem lain"))
+                    } else {
+                        sistemLain.map { AdapterPaket.Baris.Paket(it) }
+                    }
                 )
                 adapterUnduhan.gantiData(
                     if (unduhan.isEmpty()) {
