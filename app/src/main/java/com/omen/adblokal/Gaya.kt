@@ -14,6 +14,7 @@ object Gaya {
     val REDA = Color.argb(199, 238, 242, 246)   // rgba(238,242,246,.78)
     val KEDUA = Color.rgb(0xC7, 0xC7, 0xCC)     // teks sekunder tvOS
     val HIJAU = Color.rgb(0x8B, 0xC3, 0x4A)
+    val KUNING = Color.rgb(0xFF, 0xD5, 0x8A)
 
     fun dp(ctx: Context, v: Int): Int = (v * ctx.resources.displayMetrics.density).toInt()
 
